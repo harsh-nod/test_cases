@@ -69,8 +69,8 @@ module attributes { transform.with_named_sequence } {
 
     // Step 7. Do layout analysis and lower to mma
     // ===========================================================================
-    //%func_10 = transform.structured.match ops{["func.func"]} in %variant_op_3 : (!transform.any_op) -> !transform.any_op
-    //%transformed_func = transform.iree.simt_vector_distribution %func_10 : (!transform.any_op) -> (!transform.any_op)
+    %func_10 = transform.structured.match ops{["func.func"]} in %variant_op_3 : (!transform.any_op) -> !transform.any_op
+    %transformed_func = transform.iree.simt_vector_distribution %func_10 : (!transform.any_op) -> (!transform.any_op)
     transform.yield
   }
 } // module
