@@ -1,5 +1,4 @@
 Instructions
-####################
 
 Compile:
 ```
@@ -13,7 +12,7 @@ python generate_matrices.py
 
 Run:
 ```
-../../../../iree-build/tools/iree-run-module --module=mm.vmfb --function=matmul --device=rocm --input=@matrix_a.npy --input=@matrix_b.npy --output=@output.npy
+iree-build/tools/iree-run-module --module=mm.vmfb --function=matmul --device=rocm --input=@matrix_a.npy --input=@matrix_b.npy --output=@output.npy
 ```
 
 Evaluate error:
