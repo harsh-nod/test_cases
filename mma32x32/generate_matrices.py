@@ -1,8 +1,8 @@
 import numpy as np
 
-M = 16
-N = 16
-K = 16
+M = 16 * 2
+N = 16 * 2
+K = 16 * 2
 
 np.random.seed(0)
 

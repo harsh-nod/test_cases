@@ -22,5 +22,5 @@ python evaluate.py
 
 Max error should be:
 ```
-Max error =  0.00048220158
+Max error =  0.0009753704
 ```
