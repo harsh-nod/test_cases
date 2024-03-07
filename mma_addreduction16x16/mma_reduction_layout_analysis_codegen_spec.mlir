@@ -1,7 +1,9 @@
 // RUN: iree-opt %s
 
+#layout = #iree_gpu.mfma_layout<F16_16x16x16_F32>
+
 module attributes { transform.with_named_sequence } {
-  transform.named_sequence @__transform_main(
+  transform.named_sequence @__mma_main(
       %variant_op: !transform.any_op {transform.consumed}) {
     // Step 1. Find the fill and matmul ops
     // ===========================================================================
@@ -25,11 +27,11 @@ module attributes { transform.with_named_sequence } {
     transform.structured.fuse_into_containing_op %matmul into %forall_grid : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
     transform.structured.fuse_into_containing_op %fill into %forall_grid : (!transform.any_op, !transform.any_op) -> (!transform.any_op, !transform.any_op)
 
-    // Promote operands in order to test loading from shared memory.
-    %matmul_2 = transform.structured.match ops{["linalg.generic"]} in %variant_op : (!transform.any_op) -> !transform.any_op
-    %promoted_matmul, %alloc_0, %alloc_1 =
-      transform.iree.promote_operands %matmul_2 [0, 1]
-        : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
+    // // Promote operands in order to test loading from shared memory.
+    // %matmul_2 = transform.structured.match ops{["linalg.generic"]} in %variant_op : (!transform.any_op) -> !transform.any_op
+    // %promoted_matmul, %alloc_0, %alloc_1 =
+    //   transform.iree.promote_operands %matmul_2 [0, 1]
+    //     : (!transform.any_op) -> (!transform.any_op, !transform.any_op, !transform.any_op)
 
 
     // Step 3. Vectorize
@@ -53,7 +55,7 @@ module attributes { transform.with_named_sequence } {
       transform.apply_patterns.tensor.reassociative_reshape_folding
       transform.apply_patterns.canonicalization
     } : !transform.any_op
-    transform.iree.apply_cse %func_3 : !transform.any_op
+    transform.apply_cse to %func_3 : !transform.any_op
     transform.iree.eliminate_empty_tensors %variant_op : (!transform.any_op) -> ()
     transform.apply_patterns to %func_3 {
       transform.apply_patterns.linalg.erase_unnecessary_inputs
@@ -65,8 +67,7 @@ module attributes { transform.with_named_sequence } {
     // ===========================================================================
     %func_2 = transform.structured.match ops{["func.func"]} in %variant_op_3 : (!transform.any_op) -> !transform.any_op
     transform.apply_patterns to %func_2 {
-      //transform.apply_patterns.iree.prepare_vector_to_mma
-      transform.apply_patterns.iree.fold_extf_into_contraction
+      transform.apply_patterns.iree.fold_arith_ext_into_contraction
     } : !transform.any_op
 
     // Step 6. Post-bufferization vector distribution
@@ -76,10 +77,45 @@ module attributes { transform.with_named_sequence } {
     transform.iree.map_nested_forall_to_gpu_threads %func_7
         workgroup_dims = [64, 1, 1] : (!transform.any_op) -> ()
 
+    %contract = transform.structured.match ops{["vector.contract"]} in %variant_op_3 :  (!transform.any_op) -> !transform.any_op
+
     // Step 7. Do layout analysis and lower to mma
-    // ===========================================================================
-    %func_10 = transform.structured.match ops{["func.func"]} in %variant_op_3 : (!transform.any_op) -> !transform.any_op
-    %transformed_func = transform.iree.simt_vector_distribution %func_10 : (!transform.any_op) -> (!transform.any_op)
+    %layout16x16x16 = transform.param.constant #layout -> !transform.any_param
+    transform.iree.set_contraction_layout_attributes %contract, %layout16x16x16 : !transform.any_op, !transform.any_param
+
+    %distribute_func = transform.structured.match ops{["func.func"]} in %variant_op_3 : (!transform.any_op) -> !transform.any_op
+
+    transform.print %distribute_func : !transform.any_op
+
+    transform.iree.amdgpu_distribute_vectors %distribute_func : !transform.any_op
+
+    %distributed_func = transform.structured.match ops{["func.func"]} in %variant_op_3 : (!transform.any_op) -> !transform.any_op
+    transform.apply_patterns to %distributed_func {
+      transform.apply_patterns.canonicalization
+    } : !transform.any_op
+    transform.apply_cse to %distributed_func : !transform.any_op
+
+    transform.yield
+  }
+
+  transform.named_sequence @custom_mma(%mma: !transform.any_op {transform.readonly}) {
+    %variant_op = transform.get_parent_op %mma {op_name = "hal.executable.variant"} : (!transform.any_op) -> !transform.any_op
+    %exports = transform.structured.match ops{["hal.executable.export"]} in %variant_op : (!transform.any_op) -> !transform.any_op
+    %attn = transform.param.constant #iree_codegen.translation_info<TransformDialectCodegen
+                                                                               codegen_spec = @__mma_main> -> !transform.any_param
+    transform.annotate %exports "translation_info" = %attn : !transform.any_op, !transform.any_param
+    transform.yield
+  }
+
+  transform.named_sequence @match_mma(%mma: !transform.any_op {transform.readonly}) -> (!transform.any_op) {
+    transform.match.operation_name %mma ["linalg.matmul_transpose_b"] : !transform.any_op
+    transform.yield %mma : !transform.any_op
+  }
+
+  transform.named_sequence @__kernel_config(%variant_op: !transform.any_op {transform.consumed}) {
+    transform.foreach_match in %variant_op
+        @match_mma -> @custom_mma
+      : (!transform.any_op) -> (!transform.any_op)
     transform.yield
   }
 } // module
